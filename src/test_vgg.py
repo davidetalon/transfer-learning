@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision.datasets import FakeData
-from torchvision.models import resnet18, vgg
+from torchvision.models import resnet18, mobilenet_v2
 from torchvision.transforms import ToTensor, Compose, Normalize
 from utils.correlation import max_corr, soft_max_corr
 from utils.model import initilize_resNet
@@ -19,7 +19,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-pre_train_epochs = 0
+pre_train_epochs = 50
 mtlcorr_epochs = 50
 
 tensors=[]
@@ -93,10 +93,12 @@ def train_mtl_corr(batch, models, losses, optimizers, weights):
 
     shared_corr = 0
     spec_corr = 0
+    print(len(tensors))
     if w_corr != 0:
         num_intermediate = len(tensors)//2
         for layer in range(num_intermediate):
             shape = tensors[layer].shape
+            print(shape)
             shared_t1 = tensors[layer][:, :int(shape[1]//2), :, :]
             shared_t2 = tensors[num_intermediate+layer][:, :int(shape[1]//2), :, :]
             shared_corr = shared_corr + max_corr(shared_t1, shared_t2, device)
@@ -123,37 +125,27 @@ def train_mtl_corr(batch, models, losses, optimizers, weights):
 
     
     loss.backward()
-
-
-
     optimizers[0].step()
     optimizers[1].step()
 
     return loss, t1_loss, t2_loss, shared_corr, spec_corr, mse, spar_loss, soft_t1, soft_t2
 
+
+
 orig_model_t1 = initilize_resNet(out_classes=2, pretrained=None, load='models/res18_STL_t1.ckp', device=device)
 orig_model_t1 = dict(orig_model_t1.named_parameters())
 orig_model_t2 = initilize_resNet(out_classes=2, pretrained=None, load='models/res18_STL_t2.ckp', device=device)
 orig_model_t2 = dict(orig_model_t2.named_parameters())
-def spar(model_t1, model_t2):
 
+def spar(model_t1, model_t2):
     spar_t1 = 0
     for name, param in model_t1.named_parameters():
         spar_t1 = spar_t1 + torch.norm((orig_model_t1[name]- param), 2)
-        # if (name.find('fc') == -1):
-        #     spar_t1 = spar_t1 + torch.norm((orig_model_t1[name]- param), 2)
-        # else:
-        #     # the last layer is not constrained to previous one?!
-        #     spar_t1 = spar_t1 + torch.norm(param, 2)
 
     spar_t2 = 0
     for name, param in model_t2.named_parameters():
         spar_t2 = spar_t2 + torch.norm((orig_model_t2[name]- param), 2)
-        # if (name.find('fc') == -1):
-        #     spar_t2 = spar_t2 + torch.norm((orig_model_t2[name]- param), 2)
-        # else:
-        #     # the last layer is not constrained to previous one?!
-        #     spar_t2 = spar_t2 + torch.norm(param, 2)
+
 
     return spar_t1 + spar_t2
 
@@ -190,13 +182,15 @@ train_mtask = CIFARDataset(root='data/processed/cifar/train', transform=transfor
 dloader_train_mtask = torch.utils.data.DataLoader(train_mtask, batch_size=128, shuffle=True, num_workers=4)
 
 ft_mtask = CIFARDataset(root='data/processed/cifar/fine-tune', transform=transform, target_transform=mtl)
-dloader_ft_mtask = torch.utils.data.DataLoader(ft_mtask, batch_size=128, shuffle=True, num_workers=4, drop_last=True)
-
+dloader_ft_mtask = torch.utils.data.DataLoader(ft_mtask, batch_size=32, shuffle=True, num_workers=4, drop_last=True)
 
 
 models=[]
-models.append(initilize_resNet(out_classes=2, pretrained=False, load=None, device=device))
-models.append(initilize_resNet(out_classes=2, pretrained=False, load=None, device=device))
+models.append(mobilenet_v2().to(device))
+models[0].classifier[-1] = nn.Linear(models[0].classifier[-1].in_features, 2).to(device)
+models.append(mobilenet_v2().to(device))
+models[1].classifier[-1] = nn.Linear(models[1].classifier[-1].in_features, 2).to(device)
+
 
 t1_criterion = torch.nn.CrossEntropyLoss().to(device)
 t2_criterion = torch.nn.CrossEntropyLoss().to(device)
@@ -204,7 +198,6 @@ t2_criterion = torch.nn.CrossEntropyLoss().to(device)
 
 opt_t1 = torch.optim.SGD(models[0].parameters(),lr=0.01, momentum=0.9, weight_decay=5e-4)
 opt_t2 = torch.optim.SGD(models[1].parameters(),lr=0.01, momentum=0.9, weight_decay=5e-4)
-
 
 
 pre_test_acc_t1 = []
@@ -252,42 +245,27 @@ for epoch in range(pre_train_epochs):
     pre_ft_acc_t2.append(evaluate(models[1], dloader_ft_t2, device=device))
 
 
-# print("Saving t1")
-# torch.save(models[0].state_dict(), "runs_res18_STL_t1.ckp")
+print("Saving t1")
+torch.save(models[0].state_dict(), "models/vgg16_STL_t1.ckp")
 
-# print("Saving t2")
-# torch.save(models[1].state_dict(), "runs_res18_STL_t2.ckp")
+print("Saving t2")
+torch.save(models[1].state_dict(), "models/vgg16_STL_t2.ckp")
 
 
 
 runs = [
-        {'w_t1': 0, 'w_t2': 0, 'w_corr': 2, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False},
-        # {'w_t1': 1, 'w_t2': 1, 'w_corr': 0, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False},
-        # {'w_t1': 1, 'w_t2': 1, 'w_corr': 0.1, 'w_spar': 0, 'w_soft': 0, 'bn_ft': True, 'lr': 0.001, 'decay': False},
-        # {'w_t1': 1, 'w_t2': 1, 'w_corr': 0, 'w_spar': 0, 'w_soft': 0, 'bn_ft': True, 'lr': 0.001, 'decay': False},
+        {'w_t1': 1, 'w_t2': 1, 'w_corr': 0.2, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False},
         
 ]       
 
-# w_t = [0.1, 0.2, 0.5, 1]
-# w_corr = [0.1, 0.2, 0.5, 1]
-# w_soft = [0.1, 0.2]
-
-# runs=[]
-# for wt in w_t:
-#     for wcorr in w_corr:
-#         for wsoft in w_soft:
-#             runs.append({'w_t1':wt, 'w_t2':wt, 'w_corr':wcorr, 'w_spar':0, 'w_soft':wsoft, 'bn_ft':True, 'lr':0.001, 'decay':False})
-
-# n_runs = 5
-# runs=[]
-# for no_corr_idx in range(n_runs):
-#     runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0.1, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False})
-# for corr_idx in range(n_runs):
-#     runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False})
-# for corr_idx in range(n_runs):
-#     runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0.1, 'w_spar': 0, 'w_soft': 0, 'bn_ft': True, 'lr': 0.001, 'decay': False})
-# for corr_idx in range(n_runs):
-#     runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0, 'w_spar': 0, 'w_soft': 0, 'bn_ft': True, 'lr': 0.001, 'decay': False})
+n_runs = 5
+runs=[]
+for no_corr_idx in range(n_runs):
+    runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0.2, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False})
+for corr_idx in range(n_runs):
+    runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False})
+for corr_idx in range(n_runs):
+    runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0.2, 'w_spar': 0, 'w_soft': 0, 'bn_ft': True, 'lr': 0.001, 'decay': False})
    
 
 run_test_acc_t1 = []
@@ -301,9 +279,16 @@ run_ft_acc_t2=[]
 
 for run_idx, run in enumerate(runs):
     
+    # models=[]
+    # models.append(initilize_resNet(out_classes=2, pretrained=None, load='models/res18_STL_t1.ckp', device=device))
+    # models.append(initilize_resNet(out_classes=2, pretrained=None, load='models/res18_STL_t2.ckp', device=device))
     models=[]
-    models.append(initilize_resNet(out_classes=2, pretrained=None, load='models/res18_STL_t1.ckp', device=device))
-    models.append(initilize_resNet(out_classes=2, pretrained=None, load='models/res18_STL_t2.ckp', device=device))
+    models.append(mobilenet_v2().to(device))
+    models[0].classifier[-1] = nn.Linear(models[0].classifier[-1].in_features, 2).to(device)
+    models[0].load_state_dict(torch.load("models/vgg16_STL_t1.ckp", map_location=device))
+    models.append(mobilenet_v2().to(device))
+    models[1].classifier[-1] = nn.Linear(models[1].classifier[-1].in_features, 2).to(device)
+    models[0].load_state_dict(torch.load("models/vgg16_STL_t2.ckp", map_location=device))
 
     if ft_mtask.requires_soft==False:
         ft_mtask.produce_soft_labels(models, 128, device)
@@ -316,20 +301,6 @@ for run_idx, run in enumerate(runs):
         sched_t1 = torch.optim.lr_scheduler.StepLR(opt_t1, step_size=2, gamma=0.75)
         sched_t2 = torch.optim.lr_scheduler.StepLR(opt_t2, step_size=2, gamma=0.75)
 
-    # test_acc_t1 = []
-    # test_acc_t1.extend(pre_test_acc_t1)
-    # test_acc_t2 = []
-    # test_acc_t2.extend(pre_test_acc_t2)
-
-    # train_acc_t1 = []
-    # train_acc_t1.extend(pre_train_acc_t1)
-    # train_acc_t2 = []
-    # train_acc_t2.extend(pre_train_acc_t2)
-
-    # ft_acc_t1 = []
-    # ft_acc_t1.extend(pre_ft_acc_t1)
-    # ft_acc_t2 = []
-    # ft_acc_t2.extend(pre_ft_acc_t2)
 
     test_acc_t1 = []
     test_acc_t1.append(evaluate(models[0], dloader_test_t1, device=device))
@@ -352,7 +323,7 @@ for run_idx, run in enumerate(runs):
             for param in model.parameters():
                 param.requires_grad = False
             model.apply(bn_requires_grad)
-            for param in model.fc.parameters():
+            for param in model.classifier[-1].parameters():
                 param.requires_grad = True
 
     for epoch in range (mtlcorr_epochs):
@@ -404,7 +375,7 @@ data = {'test_t1':run_test_acc_t1,
         'ft_t2':run_ft_acc_t2,
         'runs':runs}
 
-with open('bn_metrics.pkl', 'wb') as handle:
+with open('bn_vgg_metrics.pkl', 'wb') as handle:
     pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
@@ -421,11 +392,11 @@ for m in models[0].modules():
 gammas = np.concatenate(gammas, axis=0)
 betas = np.concatenate(betas, axis = 0)
 plt.hist(gammas, bins=2000, density=True)
-plt.savefig('bn_gammas_t1.png')
+plt.savefig('bn_vgg_gammas_t1.png')
 plt.close()
 
 plt.hist(betas, bins=2000, density=True)
-plt.savefig('bn_betas_t1.png')
+plt.savefig('bn_vgg_betas_t1.png')
 plt.close()
 
 gammas = []
@@ -441,11 +412,11 @@ for m in models[1].modules():
 gammas = np.concatenate(gammas, axis=0)
 betas = np.concatenate(betas, axis = 0)
 plt.hist(gammas, bins=200, density=True)
-plt.savefig('bn_gammas_t2.png')
+plt.savefig('bn_vgg_gammas_t2.png')
 plt.close()
 
 plt.hist(betas, bins=200, density=True)
-plt.savefig('bn_betas_t2.png')
+plt.savefig('bn_vgg_betas_t2.png')
 plt.close()
 
 
@@ -453,14 +424,14 @@ plt.close()
 for i, run in enumerate(runs):
     plt.plot(run_test_acc_t1[i], label=str(i))
 plt.legend(loc='lower left')
-plt.savefig('bn_t1.png')
+plt.savefig('bn_vgg_t1.png')
 plt.close()
 
 for i, run in enumerate(runs):
     plt.plot(run_test_acc_t2[i], label=str(i))
 
 plt.legend(loc='lower left')
-plt.savefig('bn_t2.png')
+plt.savefig('bn_vgg_t2.png')
 plt.close()
 
 # plotting learning curves
@@ -468,14 +439,14 @@ plt.plot(run_test_acc_t1[0], label='test')
 plt.plot(run_train_acc_t1[0], label='train')
 plt.plot(run_ft_acc_t1[0], label='ft')
 plt.legend(loc='lower left')
-plt.savefig('bn_lc_t1.png')
+plt.savefig('bn_vgg_lc_t1.png')
 plt.close()
 
 plt.plot(run_test_acc_t2[0], label='test')
 plt.plot(run_train_acc_t2[0], label='train')
 plt.plot(run_ft_acc_t2[0], label='ft')
 plt.legend(loc='lower left')
-plt.savefig('bn_lc_t2.png')
+plt.savefig('bn_vgg_lc_t2.png')
 plt.close()
 
 

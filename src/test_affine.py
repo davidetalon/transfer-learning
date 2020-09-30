@@ -20,7 +20,7 @@ torch.backends.cudnn.benchmark = False
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 pre_train_epochs = 0
-mtlcorr_epochs = 80
+mtlcorr_epochs = 50
 
 tensors=[]
 def get_intermediate(self, input, output):
@@ -251,20 +251,14 @@ def spar(model_t1, model_t2):
     return spar_t1 + spar_t2
 
 
-# w_t = [0.1, 0.2, 0.5, 1]
-w_corr = [0.1, 0.2, 0.5, 1, 2]
-w_soft = [0, 0.1, 0.2, 0.4]
-lrs = [0.001, 0.005]
-
+n_runs = 5
 runs=[]
-for wcorr in w_corr:
-    for wsoft in w_soft:
-        for lr in lrs:
-            runs.append({'w_t1':1, 'w_t2':1, 'w_corr':wcorr, 'w_spar':0, 'w_soft':wsoft, 'bn_ft':True, 'lr':lr, 'decay':False})
-
-# runs = [
-#         {'w_t1':1, 'w_t2':1, 'w_corr':0.1, 'w_spar':0, 'w_soft':0.2, 'bn_ft':True, 'lr':0.001, 'decay':False},
-# ]       
+for no_corr_idx in range(n_runs):
+    runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0.2, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False})
+for corr_idx in range(n_runs):
+    runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False})
+for corr_idx in range(n_runs):
+    runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0.2, 'w_spar': 0, 'w_soft': 0, 'bn_ft': True, 'lr': 0.001, 'decay': False})
 
 run_test_acc_t1 = []
 run_test_acc_t2 = []

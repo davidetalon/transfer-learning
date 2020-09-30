@@ -2,14 +2,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torchvision.datasets import FakeData
+from torchvision.datasets import FakeData, CelebA
 from torchvision.models import resnet18, vgg
+from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor, Compose, Normalize
 from utils.correlation import max_corr, soft_max_corr
 from utils.model import initilize_resNet
 from model.baseline import ShallowLinear, FilmLayer
 import matplotlib.pyplot as plt
-from data.dataset import CIFARDataset, MultitaskLabels
+from data.dataset import CIFARDataset, MultitaskLabels, MNISTDataset
 import pickle
 import numpy as np
 
@@ -19,8 +20,8 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-pre_train_epochs = 0
-mtlcorr_epochs = 50
+pre_train_epochs = 5
+mtlcorr_epochs = 0
 
 tensors=[]
 def get_intermediate(self, input, output):
@@ -123,9 +124,6 @@ def train_mtl_corr(batch, models, losses, optimizers, weights):
 
     
     loss.backward()
-
-
-
     optimizers[0].step()
     optimizers[1].step()
 
@@ -159,44 +157,49 @@ def spar(model_t1, model_t2):
 
 
 # transform=ToTensor()
-transform = Compose([ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+transform = Compose([ToTensor(), Normalize((0.1307,), (0.3081,))])
 
-task1 = MultitaskLabels([range(0,50,1)])
-test_t1 = CIFARDataset(root='data/processed/cifar/test', transform=transform, target_transform=task1)
-dloader_test_t1 = torch.utils.data.DataLoader(test_t1, batch_size=512, shuffle=False, num_workers=0)
+train_t1 = CelebA('data/raw/CelebA', split='train', target_type='attr', transform=None, target_transform=None, download=True)
+dloader_train_t1 = torch.utils.data.DataLoader(train_t1, batch_size=32, shuffle=True, num_workers=0)
 
-train_t1 = CIFARDataset(root='data/processed/cifar/train', transform=transform, target_transform=task1)
-dloader_train_t1 = torch.utils.data.DataLoader(train_t1, batch_size=128, shuffle=True, num_workers=4)
+ft_t1 = CelebA('data/raw/CelebA', split='valid', target_type='attr', transform=None, target_transform=None, download=True)
+dloader_ft_t1 = torch.utils.data.DataLoader(ft_t1, batch_size=32, shuffle=True, num_workers=0)
 
-ft_t1 = CIFARDataset(root='data/processed/cifar/fine-tune', transform=transform, target_transform=task1)
-dloader_ft_t1 = torch.utils.data.DataLoader(ft_t1, batch_size=128, shuffle=False, num_workers=4)
+test_t1 = CelebA('data/raw/CelebA', split='test', target_type='attr', transform=None, target_transform=None, download=True)
+dloader_test_t1 = torch.utils.data.DataLoader(test_t1, batch_size=32, shuffle=True, num_workers=0)
+
+
+# train_t1 = CelebA('data/raw/CelebA', split='train', target_type='attr', transform=None, target_transform=None, download=True)
+# dloader_train_t1 = torch.utils.data.DataLoader(train_t1, batch_size=32, shuffle=True, num_workers=0)
+
+# train_t1 = MNISTDataset(root='data/processed/MNIST', classes=[6,8], image_set = 'train', transform=transform)
+# dloader_train_t1 = torch.utils.data.DataLoader(train_t1, batch_size=32, shuffle=True, num_workers=0)
+
+# ft_t1 = MNISTDataset(root='data/processed/MNIST', classes=[6,8], image_set = 'ft', transform=transform)
+# dloader_ft_t1 = torch.utils.data.DataLoader(ft_t1, batch_size=32, shuffle=True, num_workers=0)
+
+# test_t1 = MNISTDataset(root='data/processed/MNIST', classes=[6,8], image_set='test', transform=transform)
+# dloader_test_t1 = torch.utils.data.DataLoader(test_t1, batch_size=32, shuffle=False, num_workers=0)
 
 ###############################################
 
-task2 = MultitaskLabels([list(range(30, 50, 1)) + list(range(60,90, 1))])
+train_t2 = MNISTDataset(root='data/processed/MNIST', classes=[1,7], image_set = 'train', transform=transform)
+dloader_train_t2 = torch.utils.data.DataLoader(train_t2, batch_size=32, shuffle=True, num_workers=0)
 
-test_t2 = CIFARDataset(root='data/processed/cifar/test', transform=transform, target_transform=task2)
-dloader_test_t2 = torch.utils.data.DataLoader(test_t2, batch_size=512, shuffle=False, num_workers=0)
+ft_t2 = MNISTDataset(root='data/processed/MNIST', classes=[1,7], image_set = 'ft', transform=transform)
+dloader_ft_t2 = torch.utils.data.DataLoader(ft_t2, batch_size=32, shuffle=True, num_workers=0)
 
-train_t2 = CIFARDataset(root='data/processed/cifar/train', transform=transform, target_transform=task2)
-dloader_train_t2 = torch.utils.data.DataLoader(train_t2, batch_size=128, shuffle=True, num_workers=4)
-
-ft_t2 = CIFARDataset(root='data/processed/cifar/fine-tune', transform=transform, target_transform=task2)
-dloader_ft_t2 = torch.utils.data.DataLoader(ft_t2, batch_size=128, shuffle=False, num_workers=4)
+test_t2 = MNISTDataset(root='data/processed/MNIST', classes=[1,7], image_set='test', transform=transform)
+dloader_test_t2 = torch.utils.data.DataLoader(test_t2, batch_size=32, shuffle=False, num_workers=0)
 
 ######################################################
-mtl = MultitaskLabels([range(0,50,1), list(range(30, 50, 1)) + list(range(60,90,1))])
-train_mtask = CIFARDataset(root='data/processed/cifar/train', transform=transform, target_transform=mtl)
-dloader_train_mtask = torch.utils.data.DataLoader(train_mtask, batch_size=128, shuffle=True, num_workers=4)
-
-ft_mtask = CIFARDataset(root='data/processed/cifar/fine-tune', transform=transform, target_transform=mtl)
-dloader_ft_mtask = torch.utils.data.DataLoader(ft_mtask, batch_size=128, shuffle=True, num_workers=4, drop_last=True)
-
 
 
 models=[]
 models.append(initilize_resNet(out_classes=2, pretrained=False, load=None, device=device))
+models[0].conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False).to(device)
 models.append(initilize_resNet(out_classes=2, pretrained=False, load=None, device=device))
+models[1].conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False).to(device)
 
 t1_criterion = torch.nn.CrossEntropyLoss().to(device)
 t2_criterion = torch.nn.CrossEntropyLoss().to(device)
@@ -206,50 +209,77 @@ opt_t1 = torch.optim.SGD(models[0].parameters(),lr=0.01, momentum=0.9, weight_de
 opt_t2 = torch.optim.SGD(models[1].parameters(),lr=0.01, momentum=0.9, weight_decay=5e-4)
 
 
+#####################################
+# TRAIN T1
+#####################################
 
 pre_test_acc_t1 = []
 pre_test_acc_t1.append(evaluate(models[0], dloader_test_t1, device=device))
-pre_test_acc_t2 = []
-pre_test_acc_t2.append(evaluate(models[1], dloader_test_t2, device=device))
 
 pre_train_acc_t1 = []
 pre_train_acc_t1.append(evaluate(models[0], dloader_train_t1, device=device))
-pre_train_acc_t2 = []
-pre_train_acc_t2.append(evaluate(models[1], dloader_train_t2, device=device))
 
 pre_ft_acc_t1 = []
 pre_ft_acc_t1.append(evaluate(models[0], dloader_ft_t1, device=device))
-pre_ft_acc_t2 = []
-pre_ft_acc_t2.append(evaluate(models[1], dloader_ft_t2, device=device))
+
 for epoch in range(pre_train_epochs):
-    for i, batch in enumerate(dloader_train_mtask):
+    for i, batch in enumerate(dloader_train_t1):
 
         opt_t1.zero_grad()
-        opt_t2.zero_grad()
-        
+
         sample = batch[0].to(device)
         labels = batch[1].to(device)
-
         pred = models[0](sample)
-        t1_loss = t1_criterion(pred, labels[:, 0])
+
+        t1_loss = t1_criterion(pred, labels)
         t1_loss.backward()
         opt_t1.step()
 
+
+        print('[T1 PRE-TRAIN][Epoch %d/%d][Batch %d/%d][Loss %f]' % (epoch, pre_train_epochs, i, len(dloader_train_t1), t1_loss))
+    
+    pre_test_acc_t1.append(evaluate(models[0], dloader_test_t1, device=device))
+    pre_train_acc_t1.append(evaluate(models[0], dloader_train_t1, device=device))
+    pre_ft_acc_t1.append(evaluate(models[0], dloader_ft_t1, device=device))
+
+
+#####################################
+# TRAIN T2
+#####################################
+
+pre_test_acc_t2 = []
+pre_test_acc_t2.append(evaluate(models[1], dloader_test_t2, device=device))
+
+pre_train_acc_t2 = []
+pre_train_acc_t2.append(evaluate(models[1], dloader_train_t2, device=device))
+
+pre_ft_acc_t2 = []
+pre_ft_acc_t2.append(evaluate(models[1], dloader_ft_t2, device=device))
+
+for epoch in range(pre_train_epochs):
+    for i, batch in enumerate(dloader_train_t2):
+
+        opt_t2.zero_grad()
+
+        sample = batch[0].to(device)
+        labels = batch[1].to(device)
+
         pred = models[1](sample)
-        t2_loss = t2_criterion(pred, labels[:, 1])
+        t2_loss = t2_criterion(pred, labels)
         t2_loss.backward()
         opt_t2.step()
 
-        print('[PRE-TRAIN][Epoch %d/%d][Batch %d/%d][Loss %f/%f]' % (epoch, pre_train_epochs, i, len(dloader_train_mtask), t1_loss, t2_loss))
+        print('[T2 PRE-TRAIN][Epoch %d/%d][Batch %d/%d][Loss %f]' % (epoch, pre_train_epochs, i, len(dloader_train_t2), t2_loss))
     
-    pre_test_acc_t1.append(evaluate(models[0], dloader_test_t1, device=device))
     pre_test_acc_t2.append(evaluate(models[1], dloader_test_t2, device=device))
-
-    pre_train_acc_t1.append(evaluate(models[0], dloader_train_t1, device=device))
     pre_train_acc_t2.append(evaluate(models[1], dloader_train_t2, device=device))
-
-    pre_ft_acc_t1.append(evaluate(models[0], dloader_ft_t1, device=device))
     pre_ft_acc_t2.append(evaluate(models[1], dloader_ft_t2, device=device))
+
+#################################################################
+
+
+
+raise SystemError(0)
 
 
 # print("Saving t1")
@@ -261,7 +291,7 @@ for epoch in range(pre_train_epochs):
 
 
 runs = [
-        {'w_t1': 0, 'w_t2': 0, 'w_corr': 2, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False},
+        {'w_t1': 1, 'w_t2': 1, 'w_corr': 0.1, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False},
         # {'w_t1': 1, 'w_t2': 1, 'w_corr': 0, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False},
         # {'w_t1': 1, 'w_t2': 1, 'w_corr': 0.1, 'w_spar': 0, 'w_soft': 0, 'bn_ft': True, 'lr': 0.001, 'decay': False},
         # {'w_t1': 1, 'w_t2': 1, 'w_corr': 0, 'w_spar': 0, 'w_soft': 0, 'bn_ft': True, 'lr': 0.001, 'decay': False},
@@ -281,13 +311,11 @@ runs = [
 # n_runs = 5
 # runs=[]
 # for no_corr_idx in range(n_runs):
-#     runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0.1, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False})
+#     runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0.2, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False})
 # for corr_idx in range(n_runs):
 #     runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0, 'w_spar': 0, 'w_soft': 0.1, 'bn_ft': True, 'lr': 0.001, 'decay': False})
 # for corr_idx in range(n_runs):
-#     runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0.1, 'w_spar': 0, 'w_soft': 0, 'bn_ft': True, 'lr': 0.001, 'decay': False})
-# for corr_idx in range(n_runs):
-#     runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0, 'w_spar': 0, 'w_soft': 0, 'bn_ft': True, 'lr': 0.001, 'decay': False})
+#     runs.append({'w_t1': 1, 'w_t2': 1, 'w_corr': 0.2, 'w_spar': 0, 'w_soft': 0, 'bn_ft': True, 'lr': 0.001, 'decay': False})
    
 
 run_test_acc_t1 = []
@@ -477,6 +505,4 @@ plt.plot(run_ft_acc_t2[0], label='ft')
 plt.legend(loc='lower left')
 plt.savefig('bn_lc_t2.png')
 plt.close()
-
-
 
